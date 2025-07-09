@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Photo Authenticity Checker</title>
+    <style>
+        body { background: #111; color: #eee; font-family: Arial; padding: 20px; }
+        h1 { color: #00eaff; }
+        .result-section { background: #1e1e1e; padding: 20px; border-radius: 10px; margin-top: 30px; }
+        .score-box { font-size: 24px; font-weight: bold; margin-bottom: 15px; }
+        .high-risk { color: red; }
+        .medium-risk { color: orange; }
+        .low-risk { color: limegreen; }
+        .btn { background: #00eaff; padding: 10px 20px; color: #000; border: none; border-radius: 5px; }
+        img { max-width: 100%; border-radius: 8px; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <h1>Photo Authenticity Checker</h1>
+    <form method="post" enctype="multipart/form-data">
+        <input type="file" name="file">
+        <button class="btn" type="submit">Check Image</button>
+    </form>
+
+    {% if filename %}
+    <div class="result-section">
+        <h2>Results for: {{ filename }}</h2>
+
+        {% set risk_class = 'low-risk' %}
+        {% if risk_score >= 70 %}
+            {% set risk_class = 'high-risk' %}
+        {% elif risk_score >= 40 %}
+            {% set risk_class = 'medium-risk' %}
+        {% endif %}
+
+        <div class="score-box {{ risk_class }}">
+            Risk Score: {{ risk_score }}
+        </div>
+
+        {% if ai_score is not none %}
+        <div class="score-box">
+            AI-Likelihood Score: {{ ai_score }}
+        </div>
+        {% endif %}
+
+        <h3>Analysis Details:</h3>
+        <ul>
+            {% for line in analysis %}
+                <li>{{ line }}</li>
+            {% endfor %}
+        </ul>
+
+        {% if ela_image_path %}
+        <h3>ELA Heatmap Preview:</h3>
+        <img src="{{ url_for('static', filename='ela/' + ela_image_path.split('/')[-1]) }}">
+        {% endif %}
+    </div>
+    {% endif %}
+</body>
+</html>
