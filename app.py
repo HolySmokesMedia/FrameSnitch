@@ -1,62 +1,55 @@
-from flask import Flask, request, render_template, send_from_directory
+from flask import Flask, request, render_template_string, redirect, url_for
 import os
-from utils import ela, metadata, frequency, ai_detector
-from werkzeug.utils import secure_filename
-from datetime import datetime
-
-UPLOAD_FOLDER = 'uploads'
-ELA_FOLDER = 'static/ela'
+from PIL import Image
+import io
+import cv2
+import numpy as np
 
 app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['ELA_FOLDER'] = ELA_FOLDER
 
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(ELA_FOLDER, exist_ok=True)
+HTML_TEMPLATE = '''
+<!doctype html>
+<title>FrameSnitch</title>
+<h1>Upload an image</h1>
+<form method=post enctype=multipart/form-data>
+  <input type=file name=image>
+  <input type=submit value=Upload>
+</form>
+{% if result %}
+<h2>Result:</h2>
+<p>{{ result }}</p>
+{% endif %}
+'''
 
-def generate_filename(filename):
-    timestamp = datetime.now().strftime("%Y-%m-%d")
-    name, ext = os.path.splitext(filename)
-    safe_name = secure_filename(f"{timestamp}-{name}{ext}")
-    return safe_name
+def is_blurry(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    lap_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+    return lap_var < 100  # Threshold can be tweaked
 
-@app.route("/", methods=["GET", "POST"])
+@app.route('/', methods=['GET', 'POST'])
 def index():
-    result = {}
-    ela_path = None
-    filename = None
+    if request.method == 'POST':
+        if 'image' not in request.files:
+            return render_template_string(HTML_TEMPLATE, result="No image file provided.")
 
-    if request.method == "POST":
-        file = request.files["image"]
-        if file:
-            filename = generate_filename(file.filename)
-            filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
-            file.save(filepath)
+        file = request.files['image']
+        if file.filename == '':
+            return render_template_string(HTML_TEMPLATE, result="No file selected.")
 
-            ela_image_path = ela.create_ela_image(filepath, filename)
-            ela_path = os.path.join(app.config["ELA_FOLDER"], ela_image_path)
-            ela_result = ela.analyze_ela_image(ela_path)
-            metadata_result = metadata.extract_metadata(filepath)
-            freq_result = frequency.analyze_frequency(filepath)
-            ai_prediction = ai_detector.predict_image(filepath)
+        try:
+            img_bytes = file.read()
+            img = Image.open(io.BytesIO(img_bytes)).convert('RGB')
+            cv_img = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
 
-            result = {
-                "ela_result": ela_result,
-                "metadata": metadata_result,
-                "frequency": freq_result,
-                "ai_prediction": ai_prediction,
-            }
+            blurry = is_blurry(cv_img)
+            result = "Blurry" if blurry else "Clear"
+            return render_template_string(HTML_TEMPLATE, result=result)
 
-    return render_template("index.html", result=result, ela_path=ela_path, filename=filename)
+        except Exception as e:
+            return render_template_string(HTML_TEMPLATE, result=f"Error: {str(e)}")
 
-@app.route("/uploads/<filename>")
-def uploaded_file(filename):
-    return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
-
-@app.route("/static/ela/<filename>")
-def static_ela_file(filename):
-    return send_from_directory(app.config["ELA_FOLDER"], filename)
+    return render_template_string(HTML_TEMPLATE, result=None)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(host='0.0.0.0', port=port, debug=True)
