@@ -1,59 +1,62 @@
-from flask import Flask, render_template, request
-from werkzeug.utils import secure_filename
+from flask import Flask, request, render_template, send_from_directory
 import os
-from utils.metadata import analyze_metadata
-from utils.ela import generate_ela_image, calculate_ela_difference
-from utils.frequency import calculate_high_freq_ratio
-from utils.ai_detector import estimate_ai_likelihood
-from utils.scan_db import has_been_scanned, record_scan
+from utils import ela, metadata, frequency, ai_detector
+from werkzeug.utils import secure_filename
+from datetime import datetime
 
 UPLOAD_FOLDER = 'uploads'
 ELA_FOLDER = 'static/ela'
-ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['ELA_FOLDER'] = ELA_FOLDER
 
-def allowed_file(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(ELA_FOLDER, exist_ok=True)
 
-@app.route('/', methods=['GET', 'POST'])
+def generate_filename(filename):
+    timestamp = datetime.now().strftime("%Y-%m-%d")
+    name, ext = os.path.splitext(filename)
+    safe_name = secure_filename(f"{timestamp}-{name}{ext}")
+    return safe_name
+
+@app.route("/", methods=["GET", "POST"])
 def index():
-    result = None
+    result = {}
+    ela_path = None
     filename = None
-    if request.method == 'POST':
-        if 'file' not in request.files:
-            result = {'error': 'No file part in the request'}
-        file = request.files['file']
-        if file.filename == '':
-            result = {'error': 'No selected file'}
-        if file and allowed_file(file.filename):
-            filename = secure_filename(file.filename)
-            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+
+    if request.method == "POST":
+        file = request.files["image"]
+        if file:
+            filename = generate_filename(file.filename)
+            filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
             file.save(filepath)
 
-            if has_been_scanned(filename):
-                result = {'cached': True, 'filename': filename}
-            else:
-                metadata = analyze_metadata(filepath)
-                ela_path, ela_max_diff = generate_ela_image(filepath)
-                high_freq_ratio = calculate_high_freq_ratio(filepath)
-                ai_score, ai_flags = estimate_ai_likelihood(filepath)
+            ela_image_path = ela.create_ela_image(filepath, filename)
+            ela_path = os.path.join(app.config["ELA_FOLDER"], ela_image_path)
+            ela_result = ela.analyze_ela_image(ela_path)
+            metadata_result = metadata.extract_metadata(filepath)
+            freq_result = frequency.analyze_frequency(filepath)
+            ai_prediction = ai_detector.predict_image(filepath)
 
-                record_scan(filename)
+            result = {
+                "ela_result": ela_result,
+                "metadata": metadata_result,
+                "frequency": freq_result,
+                "ai_prediction": ai_prediction,
+            }
 
-                result = {
-                    'metadata': metadata,
-                    'ela_max_diff': ela_max_diff,
-                    'high_freq_ratio': high_freq_ratio,
-                    'ai_score': ai_score,
-                    'ai_flags': ai_flags,
-                    'ela_path': ela_path,
-                    'filename': filename
-                }
-    return render_template('index.html', result=result)
+    return render_template("index.html", result=result, ela_path=ela_path, filename=filename)
 
-if __name__ == '__main__':
-    import os
+@app.route("/uploads/<filename>")
+def uploaded_file(filename):
+    return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
+
+@app.route("/static/ela/<filename>")
+def static_ela_file(filename):
+    return send_from_directory(app.config["ELA_FOLDER"], filename)
+
+if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port, debug=True)
+    app.run(host="0.0.0.0", port=port, debug=True)
